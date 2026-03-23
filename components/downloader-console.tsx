@@ -696,7 +696,7 @@ export function DownloaderConsole() {
             <div className="space-y-1">
               <p className="text-[14px] font-semibold">Paste a YouTube link to start</p>
               <p className="max-w-xs text-[12px] leading-relaxed text-[var(--muted-foreground)]">
-                We'll fetch all available qualities so you can pick exactly what you want before downloading.
+                We&apos;ll fetch all available qualities so you can pick exactly what you want before downloading.
               </p>
             </div>
           </div>
