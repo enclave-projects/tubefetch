@@ -1,0 +1,11 @@
+.git
+.gitignore
+.claude
+.next
+node_modules
+downloads
+*.tsbuildinfo
+Dockerfile
+.dockerignore
+docs
+README.md
