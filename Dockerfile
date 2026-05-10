@@ -42,6 +42,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static     ./.next/static
 RUN mkdir -p /app/downloads && chown nextjs:nodejs /app/downloads
 VOLUME ["/app/downloads"]
 
+# Database configuration (required for production)
+# ENV PGHOST=your-host
+# ENV PGDATABASE=your-db
+# ENV PGUSER=your-user
+# ENV PGPASSWORD=your-password
+# ENV ADMIN_SECRET=your-secret-token
+
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
