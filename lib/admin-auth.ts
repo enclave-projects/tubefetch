@@ -1,13 +1,64 @@
 import bcrypt from "bcryptjs";
+import { nanoid } from "nanoid";
 import pool from "@/lib/db";
 
+interface SessionEntry {
+  token: string;
+  createdAt: number;
+}
+
+declare global {
+  var __tubeFetchSessions: Map<string, SessionEntry> | undefined;
+}
+
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function getSessionStore(): Map<string, SessionEntry> {
+  if (!globalThis.__tubeFetchSessions) {
+    globalThis.__tubeFetchSessions = new Map();
+  }
+  return globalThis.__tubeFetchSessions;
+}
+
+function cleanExpiredSessions(): void {
+  const store = getSessionStore();
+  const now = Date.now();
+  for (const [key, entry] of store) {
+    if (now - entry.createdAt > SESSION_MAX_AGE_MS) {
+      store.delete(key);
+    }
+  }
+}
+
 /**
- * Verify an admin token. First checks against the ADMIN_SECRET env var,
- * then could be extended to check stored tokens.
+ * Create a new ephemeral session token for browser-based admin access.
+ */
+export function createSession(): string {
+  cleanExpiredSessions();
+  const sessionId = nanoid(32);
+  getSessionStore().set(sessionId, { token: sessionId, createdAt: Date.now() });
+  return sessionId;
+}
+
+/**
+ * Verify an admin token. Checks the ADMIN_SECRET env var (for programmatic/API use)
+ * and the ephemeral session store (for browser sessions).
  */
 export async function verifyAdminToken(token: string): Promise<boolean> {
   const adminSecret = process.env.ADMIN_SECRET;
   if (adminSecret && token === adminSecret) return true;
+
+  const store = getSessionStore();
+  const session = store.get(token);
+  if (session && Date.now() - session.createdAt <= SESSION_MAX_AGE_MS) {
+    return true;
+  }
+
+  // Remove expired session if found
+  if (session) {
+    store.delete(token);
+  }
+
   return false;
 }
 

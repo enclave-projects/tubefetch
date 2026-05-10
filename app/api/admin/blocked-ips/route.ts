@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withSecurity } from "@/lib/middleware";
 import { extractBearerToken, verifyAdminToken } from "@/lib/admin-auth";
-import { blockIp, unblockIp, getBlockedIps } from "@/lib/security";
+import { blockIp, unblockIp, getBlockedIps, isValidIpAddress } from "@/lib/security";
 
 export const runtime = "nodejs";
 
@@ -43,6 +43,13 @@ export const POST = withSecurity(
       if (!ip) {
         return NextResponse.json(
           { error: "IP address is required." },
+          { status: 400, headers: { "Cache-Control": "no-store" } },
+        );
+      }
+
+      if (!isValidIpAddress(ip)) {
+        return NextResponse.json(
+          { error: "Invalid IP address format." },
           { status: 400, headers: { "Cache-Control": "no-store" } },
         );
       }

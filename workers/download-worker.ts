@@ -15,6 +15,7 @@ import {
   type JobController,
   type PlaylistItemRecord,
 } from "@/lib/download-types";
+import { updateDownloadStatus } from "@/lib/download-history";
 import { getJobDirectory } from "@/lib/paths";
 import { sanitizeFileName } from "@/lib/utils";
 
@@ -588,6 +589,17 @@ async function processSingleVideoJob(jobId: string, controller: JobController) {
     durationSeconds: metadata.durationSeconds,
     stage: "Download ready",
   });
+
+  try {
+    await updateDownloadStatus(
+      jobId,
+      "completed",
+      metadata.title,
+      output.fileSizeBytes,
+    );
+  } catch {
+    // Non-critical - don't fail the job if history update fails
+  }
 }
 
 async function processPlaylistJob(jobId: string, controller: JobController) {
@@ -735,15 +747,35 @@ async function processPlaylistJob(jobId: string, controller: JobController) {
     failedCount: completedJob.failedCount,
     items: completedJob.items,
   });
+
+  try {
+    await updateDownloadStatus(
+      jobId,
+      "completed",
+      completedJob.playlistTitle,
+      archive.fileSizeBytes,
+    );
+  } catch {
+    // Non-critical - don't fail the job if history update fails
+  }
 }
 
 export async function processDownloadJob(jobId: string, controller: JobController) {
   const job = controller.getJobOrThrow(jobId);
 
-  if (job.kind === "playlist") {
-    await processPlaylistJob(jobId, controller);
-    return;
-  }
+  try {
+    if (job.kind === "playlist") {
+      await processPlaylistJob(jobId, controller);
+      return;
+    }
 
-  await processSingleVideoJob(jobId, controller);
+    await processSingleVideoJob(jobId, controller);
+  } catch (error) {
+    try {
+      await updateDownloadStatus(jobId, "failed");
+    } catch {
+      // Non-critical - don't mask the original error
+    }
+    throw error;
+  }
 }

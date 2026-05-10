@@ -12,6 +12,9 @@ const pool =
     user: process.env.PGUSER,
     password: process.env.PGPASSWORD,
     ssl: { rejectUnauthorized: false },
+    max: 5,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
   }));
 
 export default pool;

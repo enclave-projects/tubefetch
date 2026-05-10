@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { withSecurity } from "@/lib/middleware";
-import { verifyAdminToken, verifyAdminCredentials } from "@/lib/admin-auth";
+import {
+  verifyAdminToken,
+  verifyAdminCredentials,
+  createSession,
+} from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -18,8 +22,9 @@ export const POST = withSecurity(
       if (token) {
         const valid = await verifyAdminToken(token);
         if (valid) {
+          const sessionToken = createSession();
           return NextResponse.json(
-            { success: true, token },
+            { success: true, token: sessionToken },
             { headers: { "Cache-Control": "no-store" } },
           );
         }
@@ -33,9 +38,9 @@ export const POST = withSecurity(
       if (username && password) {
         const valid = await verifyAdminCredentials(username, password);
         if (valid) {
-          const adminSecret = process.env.ADMIN_SECRET ?? "";
+          const sessionToken = createSession();
           return NextResponse.json(
-            { success: true, token: adminSecret },
+            { success: true, token: sessionToken },
             { headers: { "Cache-Control": "no-store" } },
           );
         }

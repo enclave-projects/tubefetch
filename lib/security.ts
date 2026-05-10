@@ -62,7 +62,35 @@ export async function getBlockedIps(): Promise<
 }
 
 /**
+ * Validate that a string is a valid IPv4 or IPv6 address.
+ */
+export function isValidIpAddress(ip: string): boolean {
+  if (!ip || ip.length > 45) return false;
+
+  // IPv4 check: x.x.x.x where each octet is 0-255
+  const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+  const ipv4Match = ip.match(ipv4Regex);
+  if (ipv4Match) {
+    return ipv4Match.slice(1).every((octet) => {
+      const num = parseInt(octet, 10);
+      return num >= 0 && num <= 255;
+    });
+  }
+
+  // IPv6 check: contains colons, only hex digits and colons
+  const ipv6Regex = /^[0-9a-fA-F:]+$/;
+  if (ipv6Regex.test(ip) && ip.includes(":")) {
+    // Must have between 2 and 7 colons (for valid IPv6)
+    const colonCount = (ip.match(/:/g) || []).length;
+    return colonCount >= 2 && colonCount <= 7;
+  }
+
+  return false;
+}
+
+/**
  * Check rate limit for a given IP and endpoint.
+ * Uses an atomic INSERT ... ON CONFLICT DO UPDATE to eliminate TOCTOU races.
  */
 export async function checkRateLimit(
   ip: string,
@@ -71,57 +99,38 @@ export async function checkRateLimit(
   windowMs: number,
 ): Promise<{ allowed: boolean; remaining: number; resetAt: Date }> {
   try {
-    const now = new Date();
-    const windowStart = new Date(now.getTime() - windowMs);
-
-    // Try to get existing record
-    const existing = await pool.query(
-      "SELECT request_count, window_start FROM rate_limits WHERE ip_address = $1 AND endpoint = $2",
-      [ip, endpoint],
+    const result = await pool.query(
+      `INSERT INTO rate_limits (ip_address, endpoint, request_count, window_start)
+       VALUES ($1, $2, 1, NOW())
+       ON CONFLICT (ip_address, endpoint) DO UPDATE SET
+         request_count = CASE
+           WHEN rate_limits.window_start < NOW() - INTERVAL '1 millisecond' * $3
+           THEN 1
+           ELSE rate_limits.request_count + 1
+         END,
+         window_start = CASE
+           WHEN rate_limits.window_start < NOW() - INTERVAL '1 millisecond' * $3
+           THEN NOW()
+           ELSE rate_limits.window_start
+         END
+       RETURNING request_count, window_start`,
+      [ip, endpoint, windowMs],
     );
 
-    if (existing.rowCount === 0 || existing.rows.length === 0) {
-      // No record - insert new one
-      await pool.query(
-        `INSERT INTO rate_limits (ip_address, endpoint, request_count, window_start)
-         VALUES ($1, $2, 1, NOW())
-         ON CONFLICT (ip_address, endpoint)
-         DO UPDATE SET request_count = 1, window_start = NOW()`,
-        [ip, endpoint],
-      );
-      const resetAt = new Date(now.getTime() + windowMs);
-      return { allowed: true, remaining: maxRequests - 1, resetAt };
-    }
+    const row = result.rows[0];
+    const requestCount = row.request_count as number;
+    const windowStart = new Date(row.window_start);
+    const resetAt = new Date(windowStart.getTime() + windowMs);
 
-    const row = existing.rows[0];
-    const rowWindowStart = new Date(row.window_start);
-
-    if (rowWindowStart < windowStart) {
-      // Window expired - reset
-      await pool.query(
-        `UPDATE rate_limits SET request_count = 1, window_start = NOW()
-         WHERE ip_address = $1 AND endpoint = $2`,
-        [ip, endpoint],
-      );
-      const resetAt = new Date(now.getTime() + windowMs);
-      return { allowed: true, remaining: maxRequests - 1, resetAt };
-    }
-
-    // Within window
-    const currentCount = row.request_count as number;
-    if (currentCount >= maxRequests) {
-      const resetAt = new Date(rowWindowStart.getTime() + windowMs);
+    if (requestCount > maxRequests) {
       return { allowed: false, remaining: 0, resetAt };
     }
 
-    // Increment
-    await pool.query(
-      `UPDATE rate_limits SET request_count = request_count + 1
-       WHERE ip_address = $1 AND endpoint = $2`,
-      [ip, endpoint],
-    );
-    const resetAt = new Date(rowWindowStart.getTime() + windowMs);
-    return { allowed: true, remaining: maxRequests - 1 - currentCount, resetAt };
+    return {
+      allowed: true,
+      remaining: maxRequests - requestCount,
+      resetAt,
+    };
   } catch {
     // Degrade gracefully - allow request if DB is unreachable
     return { allowed: true, remaining: maxRequests, resetAt: new Date(Date.now() + windowMs) };
