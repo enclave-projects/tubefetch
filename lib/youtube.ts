@@ -20,10 +20,20 @@ export function parseYoutubeTarget(input: string): YoutubeTarget | null {
     return null;
   }
 
+  // Reject overly long URLs
+  if (trimmed.length > 2048) {
+    return null;
+  }
+
   const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 
   try {
     const url = new URL(candidate);
+
+    // Only allow https protocol
+    if (url.protocol !== "https:") {
+      return null;
+    }
     const host = url.hostname.toLowerCase();
 
     if (!YOUTUBE_HOSTS.has(host)) {
