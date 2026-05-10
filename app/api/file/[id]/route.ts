@@ -4,58 +4,73 @@ import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { downloadQueue } from "@/lib/job-queue";
 import { sanitizeFileName } from "@/lib/utils";
+import { withSecurity } from "@/lib/middleware";
+import { validatePathWithinRoot } from "@/lib/paths";
 
 export const runtime = "nodejs";
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ id: string }> },
-) {
-  const { id } = await context.params;
-  const job = downloadQueue.getJob(id);
+export const GET = withSecurity(
+  async (
+    _request: Request,
+    context?: unknown,
+  ) => {
+    const { id } = await (context as { params: Promise<{ id: string }> }).params;
+    const job = downloadQueue.getJob(id);
 
-  if (!job) {
-    return NextResponse.json(
-      { error: "Job not found." },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
-    );
-  }
+    if (!job) {
+      return NextResponse.json(
+        { error: "Job not found." },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
-  if (job.status === "expired") {
-    return NextResponse.json(
-      { error: "This download has expired." },
-      { status: 410, headers: { "Cache-Control": "no-store" } },
-    );
-  }
+    if (job.status === "expired") {
+      return NextResponse.json(
+        { error: "This download has expired." },
+        { status: 410, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
-  if (job.status !== "completed") {
-    return NextResponse.json(
-      { error: "The file is not ready yet." },
-      { status: 409, headers: { "Cache-Control": "no-store" } },
-    );
-  }
+    if (job.status !== "completed") {
+      return NextResponse.json(
+        { error: "The file is not ready yet." },
+        { status: 409, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
-  const targetPath = job.kind === "playlist" ? job.zipOutputPath : job.outputPath;
-  if (!targetPath) {
-    return NextResponse.json(
-      { error: "The completed file is missing." },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
-    );
-  }
+    const targetPath = job.kind === "playlist" ? job.zipOutputPath : job.outputPath;
+    if (!targetPath) {
+      return NextResponse.json(
+        { error: "The completed file is missing." },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
-  await fs.access(targetPath);
-  const stats = await fs.stat(targetPath);
-  const defaultName = job.kind === "playlist" ? `playlist-${id}.zip` : `tube-fetch-${id}.mp4`;
-  const downloadName = sanitizeFileName(job.fileName || defaultName);
-  const contentType = job.kind === "playlist" ? "application/zip" : "video/mp4";
-  const body = Readable.toWeb(createReadStream(targetPath)) as ReadableStream;
+    // Validate path stays within downloads root
+    try {
+      validatePathWithinRoot(targetPath);
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid file path." },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
-  return new NextResponse(body, {
-    headers: {
-      "Cache-Control": "no-store",
-      "Content-Length": stats.size.toString(),
-      "Content-Type": contentType,
-      "Content-Disposition": `attachment; filename="${downloadName}"`,
-    },
-  });
-}
+    await fs.access(targetPath);
+    const stats = await fs.stat(targetPath);
+    const defaultName = job.kind === "playlist" ? `playlist-${id}.zip` : `tube-fetch-${id}.mp4`;
+    const downloadName = sanitizeFileName(job.fileName || defaultName);
+    const contentType = job.kind === "playlist" ? "application/zip" : "video/mp4";
+    const body = Readable.toWeb(createReadStream(targetPath)) as ReadableStream;
+
+    return new NextResponse(body, {
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Length": stats.size.toString(),
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${downloadName}"`,
+      },
+    });
+  },
+  { maxRequests: 30, windowMs: 60000 },
+);
